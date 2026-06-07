@@ -1,0 +1,56 @@
+name: keep-space-alive
+
+# Keeps the free-tier HF Space https://huggingface.co/spaces/claessonlab/Taxonova
+# awake by sending an unauthenticated HTTP GET to it on a schedule.
+# No secrets / tokens are required.
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'   # ping the Space every 6 hours
+    - cron: '23 8 * * 1'     # Mondays: tiny commit so GitHub keeps the cron enabled
+  workflow_dispatch:          # lets you run it manually from the Actions tab
+
+permissions:
+  contents: write
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Taxonova Space
+        run: |
+          urls=(
+            "https://claessonlab-taxonova.hf.space/"
+            "https://huggingface.co/spaces/claessonlab/Taxonova"
+          )
+          fail=0
+          for url in "${urls[@]}"; do
+            echo "Pinging $url"
+            code=$(curl -sS -o /dev/null -w '%{http_code}' \
+                     --max-time 90 --retry 3 --retry-delay 15 "$url" || echo "000")
+            echo "  -> HTTP $code"
+            # the app subdomain is the one that proves activity; require it to be reachable
+            if [ "$url" = "https://claessonlab-taxonova.hf.space/" ] && \
+               { [ "$code" -lt 200 ] || [ "$code" -ge 400 ]; }; then
+              fail=1
+            fi
+          done
+          exit $fail
+
+  # GitHub disables scheduled workflows after 60 days of *repo* inactivity.
+  # This weekly no-op commit keeps the repo "active" so the cron above never pauses.
+  keepalive-commit:
+    if: github.event.schedule == '23 8 * * 1'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Touch heartbeat & commit
+        run: |
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > heartbeat.txt
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add heartbeat.txt
+          git commit -m "chore: keep workflow scheduler alive [skip ci]" || {
+            echo "nothing to commit"; exit 0;
+          }
+          git push
